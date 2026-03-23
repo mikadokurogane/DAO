@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>DAO Voting</title>
+<script src="https://cdn.jsdelivr.net/npm/ethers@6/dist/ethers.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+body { font-family: sans-serif; padding: 20px; }
+button { margin: 5px; padding: 10px 20px; }
+</style>
+</head>
+<body>
+
+<h2>DAO Voting</h2>
+<div id="wallet">
+  <button id="connectBtn">ウォレット接続</button>
+  <p id="address"></p>
+</div>
+
+<div id="choices"></div>
+<div id="chartContainer">
+  <canvas id="voteChart"></canvas>
+</div>
+
+<script>
+let provider, signer, userAddress;
+const API_BASE = "https://script.google.com/macros/s/YOUR_GAS_DEPLOY_ID/exec";
+
+async function connectWallet() {
+  if(window.ethereum){
+    provider = new ethers.BrowserProvider(window.ethereum);
+    await provider.send("eth_requestAccounts", []);
+    signer = await provider.getSigner();
+    userAddress = await signer.getAddress();
+    document.getElementById("address").innerText = userAddress;
+    loadChoices();
+  } else {
+    alert("MetaMask が必要です");
+  }
+}
+
+async function loadChoices() {
+  const config = await fetch(API_BASE + "?path=config").then(r => r.json());
+  const snapshot = await fetch(API_BASE + "?path=snapshot").then(r => r.json());
+  
+  const voteCount = snapshot[userAddress] || 0;
+  if(voteCount <= 0){
+    document.getElementById("choices").innerHTML = "<p>投票権がありません</p>";
+    return;
+  }
+
+  const choicesDiv = document.getElementById("choices");
+  choicesDiv.innerHTML = "";
+  config.choices.split(",").forEach(choice => {
+    const btn = document.createElement("button");
+    btn.innerText = choice;
+    btn.onclick = () => submitVote(choice, voteCount);
+    choicesDiv.appendChild(btn);
+  });
+
+  loadChart();
+}
+
+async function submitVote(choice, votes) {
+  const message = `${choice} | ${votes} votes | proposal`;
+  const signature = await signer.signMessage(message);
+
+  const payload = {
+    address: userAddress,
+    choice,
+    votes,
+    signature,
+    valid: true
+  };
+
+  const res = await fetch(API_BASE + "?path=votes&method=POST", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  }).then(r => r.json());
+
+  if(res.success) {
+    alert("投票完了！");
+    loadChart();
+  } else {
+    alert(res.error);
+  }
+}
+
+async function loadChart() {
+  const votes = await fetch(API_BASE + "?path=votes").then(r => r.json());
+  const config = await fetch(API_BASE + "?path=config").then(r => r.json());
+  const choices = config.choices.split(",");
+  
+  const counts = choices.map(c => votes.filter(v => v.choice === c).reduce((a,b)=>a+Number(b.votes),0));
+
+  const ctx = document.getElementById("voteChart").getContext("2d");
+  if(window.voteChart) window.voteChart.destroy();
+  window.voteChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: choices,
+      datasets: [{
+        label: '投票数',
+        data: counts,
+        backgroundColor: 'rgba(75, 192, 192, 0.6)'
+      }]
+    },
+    options: { responsive: true, animation: { duration: 500 } }
+  });
+}
+
+document.getElementById("connectBtn").addEventListener("click", connectWallet);
+</script>
+
+</body>
+</html>
